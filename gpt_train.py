@@ -238,36 +238,14 @@ class DataLoaderLite:
 # attempt to autodetect the device
 import time
 
-try:
-    print("tf-keras version:", tf.keras.__version__)
-except:
-    print("Could not import TensorFlow")  
-
-try:
-    bi = tf.sysconfig.get_build_info()
-    print("CUDAv:", bi.get("cuda_version", "N/A"))
-    print("CUDNNv:", bi.get("cudnn_version", "N/A"))
-except:
-    print("Could not find CUDA/CUDNN version")
-
-print("GPU's available: ", tf.config.list_physical_devices('GPU'))
-print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-  
-
 
 train_loader = DataLoaderLite(B=4, T=256)
 tf.config.experimental.enable_tensor_float_32_execution(True) # matmul/conv tf32 precision 
 
+from gpu_config import setup_strategy
+strategy, world_size, _, _, _, device = setup_strategy()
 
-# get logits
-gpus = tf.config.list_physical_devices('GPU')
-
-if gpus:
-    device = '/GPU:0'
-else:
-    device = '/CPU:0'
-
-with tf.device(device):
+with strategy.scope():
     #tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
     model = GPT(GPTConfig(vocab_size=50304))
 
