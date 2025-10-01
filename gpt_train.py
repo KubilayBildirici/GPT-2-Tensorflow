@@ -252,17 +252,10 @@ except:
 
 print("GPU's available: ", tf.config.list_physical_devices('GPU'))
 print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-
-total_batch_size = 524288
-B = 4
-T = 1024
-assert total_batch_size % (B * T) == 0, "make sure B * T divides total_batch_size"
-grad_accum_steps = total_batch_size // (B * T)
-print(f"total desired batch size: {total_batch_size}")
-print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")  
+  
 
 
-train_loader = DataLoaderLite(B=B, T=T)
+train_loader = DataLoaderLite(B=4, T=256)
 tf.config.experimental.enable_tensor_float_32_execution(True) # matmul/conv tf32 precision 
 
 
@@ -340,48 +333,25 @@ optimizer = CustomAdamW(learning_rate=lr_schedule,
                         epsilon=1e-8,
                         exclude_from_weight_decay=["bias","LayerNorm","layer_norm","norm"])
 
-#optimizer.build(model.trainable_variables)
-x, y = train_loader.next_batch()
-with tf.GradientTape() as tape:
-    _, loss = model(x, y, training=True)
-grads = tape.gradient(loss, model.trainable_variables)
-optimizer.apply_gradients(zip(grads, model.trainable_variables))
-
 @tf.function(jit_compile=True) # XLA compilation
-def train_step(x_list,y_list):
-    grads_accum = [tf.zeros_like(var) for var in model.trainable_variables]
-    loss_accum = 0.0
-    
-    for i in range(grad_accum_steps):
-        x, y = x_list[i], y_list[i]
-        with tf.GradientTape() as tape:
-            logits, loss = model(x, y, training=True)
-            loss = loss / tf.cast(grad_accum_steps, loss.dtype)  # scale the loss
-        grads = tape.gradient(loss, model.trainable_variables)
-        grads_accum = [ga + g for ga, g in zip(grads_accum, grads)]
-        loss_accum += loss
-        
-    grads_accum, global_norm = tf.clip_by_global_norm(grads_accum, 1.0)
-    optimizer.apply_gradients(zip(grads_accum, model.trainable_variables))
-    
-    return loss_accum, global_norm
+def train_step(x,y):
+    with tf.GradientTape() as tape:
+        logits, loss = model(x, y, training=True)
+    grads = tape.gradient(loss, model.trainable_variables)
+    grads, global_norm = tf.clip_by_global_norm(grads, 1.0)
+    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    return loss, global_norm
 
 # training Loop
 for step in range(max_steps):
     t0 = time.time()
-    x_list = []
-    y_list = []
-    for micro_step in range(grad_accum_steps):
-        x, y = train_loader.next_batch()
-        x_list.append(x)
-        y_list.append(y)
-                
-    loss_accum, global_norm = train_step(x_list,y_list)
+    x, y = train_loader.next_batch()        
+    loss, norm = train_step(x,y)
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    tokens_per_sec = (train_loader.B * train_loader.T * grad_accum_steps) / (t1 - t0)
+    tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
     lr = lr_schedule(step).numpy()
-    print(f"step {step}, lr={lr:.6f}, loss={loss_accum.numpy():.4f}, norm:{global_norm.numpy():.4f} time={dt:.2f}ms, tok/sec={tokens_per_sec:.2f}")
+    print(f"step {step}, lr={lr:.6f}, loss={loss.numpy():.4f}, norm:{norm.numpy():.4f} time={dt:.2f}ms, tok/sec={tokens_per_sec:.2f}")
 
     
 
