@@ -1,0 +1,7 @@
+tensorflow==2.20.0
+tf-keras
+transformers==4.45.2
+ipykernel
+jupyter
+ipywidgets
+tqdm
