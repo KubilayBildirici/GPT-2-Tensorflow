@@ -2,22 +2,43 @@ from dataclasses import dataclass
 import tensorflow as tf
 from transformers import TFGPT2LMHeadModel
 
+from optim.gpu_config import setup_strategy
+from optim.custom_optimizer import CustomAdamW
+from optim.custom_LR import WarmupCosineSchedule
+from configs.config import load_config
+import numpy as np
+
+tf.random.set_seed(1337)
+np.random.seed(1337)
+
+
+# Model Config
+model_config, train_config = load_config(
+    "C:\\Users\\kubilay\\PycharmProjects\\gpt-2-124M\\configs\\gpt2_.json",
+    "C:\\Users\\kubilay\\PycharmProjects\\gpt-2-124M\\configs\\training.yaml"
+)
+print("Model Config:", model_config)
+print("Training Config:", train_config)
+
+
+strategy, num_processes, ddp_rank, ddp_local_rank, is_chief, device = setup_strategy()
+
 
 class CausalSelfAttention(tf.keras.layers.Layer):
     def __init__(self,config, name="attn"):
         super().__init__(name=name)
-        assert config.n_embd % config.n_head == 0
+        assert config["n_embd"] % config["n_head"] == 0
         self.config = config
-        self.n_head = config.n_head
-        self.head_dim = config.n_embd // config.n_head
-        self.attn_pdrop  = getattr(config, "attn_pdrop", 0.1)
-        self.resid_pdrop = getattr(config, "resid_pdrop", 0.1)
+        self.n_head = config["n_head"]
+        self.head_dim = config["n_embd"] // config["n_head"]
+        self.attn_pdrop  = config.get("attn_pdrop", 0.1)
+        self.resid_pdrop = config.get("resid_pdrop", 0.1)
         
-        self.c_attn = tf.keras.layers.Dense(3 * config.n_embd,name="c_attn",use_bias=True,
+        self.c_attn = tf.keras.layers.Dense(3 * config["n_embd"],name="c_attn",use_bias=True,
                                             kernel_initializer=tf.random_normal_initializer(stddev=0.02),
                                             bias_initializer="zeros") # q,k,v linear projection
         
-        self.c_proj = tf.keras.layers.Dense(config.n_embd, name="c_proj", use_bias=True,
+        self.c_proj = tf.keras.layers.Dense(config["n_embd"], name="c_proj", use_bias=True,
                                             kernel_initializer=tf.random_normal_initializer(stddev=0.02),
                                             bias_initializer="zeros") # output projection
         
@@ -59,15 +80,15 @@ class CausalSelfAttention(tf.keras.layers.Layer):
 class MLP(tf.keras.layers.Layer):
     def __init__(self,config,name="mlp"):
         super().__init__(name=name)
-        self.resid_drop = getattr(config, "resid_drop", 0.1)
+        self.resid_drop = config.get("resid_pdrop", 0.1)
         
-        self.c_fc = tf.keras.layers.Dense(4 * config.n_embd, name="c_fc", use_bias=True,
+        self.c_fc = tf.keras.layers.Dense(4 * config["n_embd"], name="c_fc", use_bias=True,
                                           kernel_initializer=tf.random_normal_initializer(stddev=0.02),
                                           bias_initializer="zeros")
         
         self.gelu = tf.keras.layers.Activation("gelu")
         
-        self.c_proj = tf.keras.layers.Dense(config.n_embd, name="c_proj", use_bias=True,
+        self.c_proj = tf.keras.layers.Dense(config["n_embd"], name="c_proj", use_bias=True,
                                             kernel_initializer=tf.random_normal_initializer(stddev=0.02),
                                             bias_initializer="zeros")
         self.drop = tf.keras.layers.Dropout(self.resid_drop)
@@ -94,28 +115,17 @@ class Block(tf.keras.layers.Layer):
         return x
 
 
-@dataclass
-class GPTConfig:
-     block_size: int = 1024 # max sequence length
-     vocab_size: int = 50257 # number of tokens: 50000 BPE merges + 256 bytes tokens + 1 <|endoftext| > token
-     n_layer: int = 12 # number of layers
-     n_head: int = 12 # number of heads
-     n_embd: int = 768 # embedding dimension
-     dropout: float = 0.1
-     bias: bool = True
-
-
 class GPT(tf.keras.Model):
     def __init__(self,config,training=False):
         super().__init__(name="transformer")
         self.config = config
-        self.wte = tf.keras.layers.Embedding(config.vocab_size, config.n_embd, name="wte",
+        self.wte = tf.keras.layers.Embedding(config["vocab_size"], config["n_embd"], name="wte",
                                              embeddings_initializer=tf.random_normal_initializer(stddev=0.02))
         
-        self.wpe = tf.keras.layers.Embedding(config.block_size, config.n_embd, name="wpe",
+        self.wpe = tf.keras.layers.Embedding(config["block_size"], config["n_embd"], name="wpe",
                                              embeddings_initializer=tf.random_normal_initializer(stddev=0.02))
         
-        self.h = [Block(config, name=f"h_._{_}") for _ in range(config.n_layer)]
+        self.h = [Block(config, name=f"h_._{_}") for _ in range(config["n_layer"])]
         self.ln_f = tf.keras.layers.LayerNormalization(epsilon=1e-5,name="ln_f")
         #self.lm_head = tf.keras.layers.Dense(config.vocab_size, use_bias=False,name="lm_head")
         
@@ -133,8 +143,8 @@ class GPT(tf.keras.Model):
         # idx is of shape (B, T)
         B, T = tf.shape(idx)[0], tf.shape(idx)[1]
         tf.debugging.assert_less_equal(
-            T, self.config.block_size,
-            message=f"Cannot forward sequence of length {T}, block size is {self.config.block_size}"
+            T, self.config["block_size"],
+            message=f"Cannot forward sequence of length {T}, block size is {self.config['block_size']}"
         )
         
         #assert T <= self.config.block_size,f"Cannot forward sequence of length {T}, block size is {self.config.block_size}"
@@ -183,7 +193,7 @@ class GPT(tf.keras.Model):
         if "dropout" in override_args:
             config_map["dropout"] = override_args["dropout"]
         
-        config = GPTConfig(**config_map)
+        config = model_config(**config_map)
         
         model = cls(config)
         hf_model = TFGPT2LMHeadModel.from_pretrained(model_type,from_pt=False)
@@ -213,7 +223,7 @@ class DataLoaderLite:
     def __init__(self, B, T):
         self.B = B
         self.T = T
-
+        # read the dataset
         with open('gpt-2-124M\input.txt', 'r') as f:
             text = f.read()
         enc = tiktoken.get_encoding("gpt2")
@@ -223,93 +233,39 @@ class DataLoaderLite:
         print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
         
         # state
-        self.current_position = 0
+        self.current_position = self.B * self.T 
     
     def next_batch(self):
         B, T = self.B, self.T
-        buf = self.tokens[self.current_position : self.current_position+B*T+1]
+        buf = self.tokens[self.current_position : self.current_position + B*T + 1]
         x = tf.reshape(buf[:-1],(B,T))
         y = tf.reshape(buf[1:],(B,T))
-        self.current_position += B*T
-        if self.current_position + (B * T +1) > len(self.tokens):
-            self.current_position = 0
+        
+        self.current_position += B * T 
+        
+        if self.current_position + (B * T  + 1) > len(self.tokens):
+            self.current_position = self.B * self.T   # reset for next epoch
+            
         return x,y
 
 # attempt to autodetect the device
 import time
 
+lr_schedule = WarmupCosineSchedule(train_config["max_lr"], train_config["min_lr"], train_config["warmup_steps"], train_config["max_steps"])
 
-train_loader = DataLoaderLite(B=4, T=256)
-tf.config.experimental.enable_tensor_float_32_execution(True) # matmul/conv tf32 precision 
-
-from gpu_config import setup_strategy
-strategy, world_size, _, _, _, device = setup_strategy()
 
 with strategy.scope():
-    #tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
-    model = GPT(GPTConfig(vocab_size=50304))
-
-class WarmupCosineSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
-    def __init__(self, max_lr, min_lr, warmup_steps, max_steps):
-        super().__init__()
-        self.max_lr = max_lr
-        self.min_lr = min_lr
-        self.warmup_steps = warmup_steps
-        self.max_steps = max_steps
-    
-    def __call__(self, step):
-        step = tf.cast(step, tf.float32)
-
-        def warmup():
-            return self.max_lr * (step + 1) / self.warmup_steps
-        
-        #cosine decay
-        decay_ratio = (step - self.warmup_steps) / (self.max_steps - self.warmup_steps)
-        decay_ratio = tf.clip_by_value(decay_ratio, 0.0, 1.0)
-        coeff = 0.5 * (1.0 + tf.cos(tf.constant(3.141592653589793) * decay_ratio))
-        cosine = self.min_lr + coeff * (self.max_lr - self.min_lr)
-        
-        lr = tf.where(step < self.warmup_steps,
-                     warmup(),
-                     tf.where(step > self.max_steps,
-                               tf.constant(self.min_lr, dtype=tf.float32),
-                               cosine))
-        return lr
-
-class CustomAdamW(tf.keras.optimizers.AdamW):
-    def __init__(self, exclude_from_weight_decay=None, **kwargs):
-        super().__init__(**kwargs)
-        if exclude_from_weight_decay is None:
-            exclude_from_weight_decay = ["bias", "LayerNorm", "layer_norm", "norm"]
-        self.exclude_from_weight_decay = exclude_from_weight_decay
-        
-    def _use_weight_decay(self, variable):
-        if not self.weight_decay:
-            return False
-        var_name = getattr(variable, "name", "")
-        for name in self.exclude_from_weight_decay:
-            if name in var_name:
-                return False
-        return True
-    
-    def _decay_weights_op(self, var):
-        if self._use_weight_decay(var.name):
-            return super()._decay_weights_op(var)
-        return tf.no_op()
-
-max_lr = 6e-4
-min_lr = max_lr * 0.1
-warmup_steps = 10
-max_steps = 50
-lr_schedule = WarmupCosineSchedule(max_lr, min_lr, warmup_steps, max_steps)
-
-# optimizer
-optimizer = CustomAdamW(learning_rate=lr_schedule,
-                        weight_decay=0.1,
+    train_loader = DataLoaderLite(B=train_config["batch_size"], T=train_config["sequence_length"])
+    model = GPT(model_config)
+    optimizer = CustomAdamW(learning_rate=lr_schedule,
+                        weight_decay=train_config["weight_decay"],
                         beta_1=0.9,
                         beta_2=0.95,
                         epsilon=1e-8,
                         exclude_from_weight_decay=["bias","LayerNorm","layer_norm","norm"])
+
+    
+tf.config.experimental.enable_tensor_float_32_execution(True) # matmul/conv tf32 precision 
 
 @tf.function(jit_compile=True) # XLA compilation
 def train_step(x,y):
@@ -321,21 +277,18 @@ def train_step(x,y):
     return loss, global_norm
 
 # training Loop
-for step in range(max_steps):
+for step in range(train_config["max_steps"]):
     t0 = time.time()
     x, y = train_loader.next_batch()        
     loss, norm = train_step(x,y)
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
+    tokens_per_sec = (train_loader.B * train_loader.T * strategy.num_replicas_in_sync) / (t1 - t0)
     lr = lr_schedule(step).numpy()
     print(f"step {step}, lr={lr:.6f}, loss={loss.numpy():.4f}, norm:{norm.numpy():.4f} time={dt:.2f}ms, tok/sec={tokens_per_sec:.2f}")
 
     
 
-tf.random.set_seed(42)
-import numpy as np
-np.random.seed(42)
 
 #prompt = "Hello, I am a language model"
 #tokens = enc.encode(prompt)

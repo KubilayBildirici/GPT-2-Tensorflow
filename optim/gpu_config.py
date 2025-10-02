@@ -1,12 +1,12 @@
-import os
-import json
 import tensorflow as tf
 
 def setup_strategy():
     # setup memory growth
     gpus = tf.config.experimental.list_physical_devices('GPU')
+    print(f"Physical GPUs: {gpus}")
     for gpu in gpus:
         try:
+            print(f"available GPU: {len(gpu)}")
             tf.config.experimental.set_memory_growth(gpu, True)
         except Exception:
             print(f'Cannot set memory growth for {gpu}')
@@ -30,7 +30,7 @@ def setup_strategy():
         ddp_rank = 0
         ddp_local_rank = 0
     
-    world_size = strategy.num_replicas_in_sync
+    num_processes  = strategy.num_replicas_in_sync
     is_chief = True # tek node
-    print(f"[TF-DDP] world_size={world_size} | device={device}")
-    return strategy, world_size, ddp_rank, ddp_local_rank, is_chief, device
+    print(f"[TF-DDP] world_size={num_processes} | device={device}")
+    return strategy, num_processes , ddp_rank, ddp_local_rank, is_chief, device
