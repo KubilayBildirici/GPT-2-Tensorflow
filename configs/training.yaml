@@ -1,7 +1,7 @@
 max_lr: 6e-4
 min_lr: 6e-5
-warmup_steps: 3700
-max_steps: 100000
+warmup_steps: 4532
+max_steps: 122500
 weight_decay: 0.1
-batch_size: 8
-sequence_length: 256
+batch_size: 16
+sequence_length: 512

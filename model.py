@@ -1,6 +1,7 @@
 import tensorflow as tf
 from transformers import TFGPT2LMHeadModel
 from configs.config import load_config
+import keras
 
 # Model Config
 model_config, train_config = load_config(
@@ -99,7 +100,7 @@ class Block(tf.keras.layers.Layer):
         x = x + self.mlp(self.ln2(x), training=training)
         return x
 
-
+@keras.saving.register_keras_serializable(package="model")
 class GPT(tf.keras.Model):
     def __init__(self,config,training=False):
         super().__init__(name="transformer")
