@@ -108,3 +108,13 @@ Once shards exist, `tf_dataset(...)` loads them as `tf.data.Dataset` objects, ap
 2. Create a feature branch (`git checkout -b feature/awesome-idea`).
 3. Commit and test your changes.
 4. Open a pull request summarizing the modifications and any new configuration requirements.
+---
+
+### 🙏 Acknowledgements
+
+Huge Thanks for [Andrej Karpathy](https://github.com/karpathy)
+and his original nanoGPT
+implementation.
+It represents a simplified and slightly different adaptation of his project, re-implemented in TensorFlow/Keras for clarity, educational value, and framework diversity.
+
+
