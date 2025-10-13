@@ -113,10 +113,7 @@ class GPT(tf.keras.Model):
         
         self.h = [Block(config, name=f"h_._{_}") for _ in range(config["n_layer"])]
         self.ln_f = tf.keras.layers.LayerNormalization(epsilon=1e-5,name="ln_f")
-        #self.lm_head = tf.keras.layers.Dense(config.vocab_size, use_bias=False,name="lm_head")
-        
-        # weight sharing scheme
-        # self._tied = False
+
     
     def get_input_embeddings(self):
         return self.wte
@@ -133,7 +130,6 @@ class GPT(tf.keras.Model):
             message=f"Cannot forward sequence of length {T}, block size is {self.config['block_size']}"
         )
         
-        #assert T <= self.config.block_size,f"Cannot forward sequence of length {T}, block size is {self.config.block_size}"
         
         pos = tf.range(0,T) # (T,)
         pos_emb = self.wpe(pos) # (T,n_embd)
@@ -145,7 +141,6 @@ class GPT(tf.keras.Model):
             
         x = self.ln_f(x)  # (B, T, n_embd)
         
-        #logits = self.lm_head(x) # (B, T, vocab_size)
         
         W = (self.wte.embeddings
              if hasattr(self.wte,"embeddings")

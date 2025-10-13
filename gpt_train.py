@@ -22,9 +22,6 @@ model_config, train_config = load_config(
     "C:\\Users\\kubilay\\PycharmProjects\\gpt-2-124M\\configs\\training.yaml"
 )
 
-#print("Model Config:", model_config)
-#print("Training Config:", train_config)
-
 
 strategy, num_processes, ddp_rank, ddp_local_rank, is_chief, device = setup_strategy()
 
